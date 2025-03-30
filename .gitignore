@@ -1,0 +1,30 @@
+# Node.js dependencies
+node_modules/
+npm-debug.log
+yarn.lock
+package-lock.json
+
+# Environment variables
+.env
+
+# Logs
+logs/
+*.log
+
+# Build output
+dist/
+build/
+
+# Editor files
+.vscode/
+.idea/
+.DS_Store
+
+# Frontend build
+frontend/node_modules/
+frontend/dist/
+
+# Backend build
+backend/node_modules/
+backend/dist/
+

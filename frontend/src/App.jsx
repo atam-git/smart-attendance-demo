@@ -1,75 +1,49 @@
-import { useState, useEffect, useCallback } from "react";
+import { useEffect, useState } from "react";
+import io from "socket.io-client";
+
+const socket = io("http://localhost:8081");
 
 export default function RTSPStream() {
   const [connected, setConnected] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [status, setStatus] = useState("Status: Not Connected");
-  const [eventSource, setEventSource] = useState(null);
-
-  const closeEventSource = useCallback(() => {
-    if (eventSource) {
-      eventSource.close();
-      setEventSource(null);
-    }
-  }, [eventSource]);
-
-  const connectCamera = async () => {
-    try {
-      const response = await fetch("http://localhost:8081/start-stream");
-      const data = await response.json();
-      if (data.status === "active") {
-        setStatus("Status: Camera Connected");
-        setConnected(true);
-        console.log("Camera Connected"); // Debugging Log
-        listenForEvents();
-      } else {
-        setStatus("Status: Failed to Connect");
-      }
-    } catch (error) {
-      setStatus("Status: Error Connecting Camera");
-      console.error(error);
-    }
-  };
-
-  const disconnectCamera = async () => {
-    try {
-      await fetch("http://localhost:8081/stop-stream");
-      setStatus("Status: Camera Disconnected");
-      setConnected(false);
-      setStreaming(false);
-      closeEventSource();
-      console.log("Camera Disconnected"); // Debugging Log
-    } catch (error) {
-      console.error("Error disconnecting camera:", error);
-    }
-  };
-
-  const listenForEvents = () => {
-    closeEventSource();
-    const source = new EventSource("http://localhost:8081/events");
-
-    source.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      console.log("Event received:", data);
-      if (data.status === "error") {
-        setStatus("Status: Stream Failed!");
-        setConnected(false);
-        setStreaming(false);
-        closeEventSource();
-      }
-    };
-
-    source.onerror = () => {
-      console.error("Event Source connection lost.");
-      closeEventSource();
-    };
-
-    setEventSource(source);
-  };
+  const [frame, setFrame] = useState(null);
+  const [connectionFailed, setConnectionFailed] = useState(false); // Track if connection failed
+  const [loading, setLoading] = useState(false); // Track loading state
 
   useEffect(() => {
-    return () => closeEventSource();
-  }, [closeEventSource]);
+    socket.on("streamStatus", (data) => {
+      console.log("Status Update:", data);
+      setStatus(`Status: ${data.message}`);
+
+      if (data.status === "active") {
+        setStreaming(true);
+        setLoading(false); // Stop loading once stream is active
+        setConnectionFailed(false); // Reset connection failed state
+      }
+
+      if (data.status === "inactive" || data.status === "error") {
+        setStreaming(false);
+        setLoading(false); // Stop loading if connection fails
+        if (data.status === "error") {
+          setConnectionFailed(true); // Mark connection as failed
+        }
+      }
+
+      if (data.status === "retrying") {
+        setLoading(true); // Keep loading if retrying
+      }
+    });
+
+    socket.on("frame", (data) => {
+      setFrame(`data:image/jpeg;base64,${data}`);
+    });
+
+    return () => {
+      socket.off("streamStatus");
+      socket.off("frame");
+    };
+  }, []);
 
   return (
     <div className="flex flex-col items-center bg-gray-100 p-5">
@@ -77,49 +51,57 @@ export default function RTSPStream() {
       <div className="my-4">
         <button
           className="px-4 py-2 bg-green-500 text-white rounded disabled:opacity-50 mx-2"
-          onClick={connectCamera}
+          onClick={() => {
+            setLoading(true); // Set loading state when attempting to connect
+            socket.emit("startStream");
+            setConnected(true);
+            setConnectionFailed(false); // Reset the failed state when trying to connect
+          }}
           disabled={connected}
         >
           Connect Camera
         </button>
         <button
           className="px-4 py-2 bg-gray-500 text-white rounded disabled:opacity-50 mx-2"
-          onClick={disconnectCamera}
+          onClick={() => {
+            socket.emit("stopStream");
+            setConnected(false);
+            setConnectionFailed(false); // Reset the failed state when disconnecting
+            setLoading(false); // Stop loading when disconnecting
+          }}
           disabled={!connected}
         >
           Disconnect Camera
         </button>
+
+        {/* Show retry button only after connection fails */}
+        {connectionFailed && (
+          <button
+            className="px-4 py-2 bg-blue-500 text-white rounded mx-2"
+            onClick={() => {
+              // Trigger retry logic manually
+              socket.emit("startStream");
+              setConnectionFailed(false); // Reset the failed state
+              setLoading(true); // Start loading when retrying
+            }}
+          >
+            Retry Connection
+          </button>
+        )}
       </div>
+
       <p className="text-lg font-semibold">{status}</p>
-      <div className="my-4">
-        <button
-          className="px-4 py-2 bg-blue-500 text-white rounded disabled:opacity-50 mx-2"
-          onClick={() => {
-            setStreaming(true);
-            console.log("Streaming Started"); // Debugging Log
-          }}
-          disabled={!connected || streaming}
-        >
-          Start Stream
-        </button>
-        <button
-          className="px-4 py-2 bg-red-500 text-white rounded disabled:opacity-50 mx-2"
-          onClick={() => {
-            setStreaming(false);
-            console.log("Streaming Stopped"); // Debugging Log
-          }}
-          disabled={!connected || !streaming}
-        >
-          Stop Stream
-        </button>
-      </div>
-      {streaming && (
+
+      {/* Display loading GIF when loading */}
+      {loading && (
+        <div className="my-4">
+          <img src="/loading-gif.gif" alt="Loading..." className="w-12 h-12" />
+        </div>
+      )}
+
+      {streaming && frame && (
         <div className="mt-4 border-2 border-black">
-          <img
-            src="http://localhost:8081/stream"
-            alt="Live Stream"
-            className="w-[640px] h-[360px]"
-          />
+          <img src={frame} alt="Live Stream" className="w-[640px] h-[360px]" />
         </div>
       )}
     </div>
